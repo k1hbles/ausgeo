@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:17
+    container_name: geocoder-db
+    environment:
+      POSTGRES_USER: geocoder
+      POSTGRES_PASSWORD: geocoder
+      POSTGRES_DB: gnaf
+      # tuned for bulk load + trigram search on a 16GB dev machine
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - work_mem=256MB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
+      - max_wal_size=4GB
+      - -c
+      - random_page_cost=1.1
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql:/sql:ro
+      - ./data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geocoder -d gnaf"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  pgdata:
