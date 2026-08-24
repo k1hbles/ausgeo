@@ -52,3 +52,60 @@ addresses. Documented as a test.
 ### Notes
 - Postgres on host port **5433** (not 5432) to avoid clashing with anything local.
 - Handy: `uv run python scripts/try_search.py "some address"`
+
+## Session 2 — 2026-08-25 · real data
+
+**15,057,532 addresses loaded.** Median query 4ms, worst 201ms.
+
+### Timings
+| Step | Time |
+|---|---|
+| `pg_restore` of `address_principals` | ~30s |
+| ETL into `address` | **100.8s** (149,422 rows/s), 0 dropped |
+| All indexes incl. GIN trigram | ~62s |
+| Table + indexes on disk | 3.6 GB |
+
+### Environment
+- Apple Silicon: `postgis/postgis` has **no arm64 build**. Using
+  `imresamu/postgis:17-3.5`, which does.
+- Reusing a data volume across base images caused a **collation version
+  mismatch** (glibc 2.41 vs 2.36) — genuine correctness risk for text indexes,
+  so the volume was recreated clean.
+
+### Bugs only real data could expose
+1. **`flat_number` is `'UNIT 1'`, not `'1'`.** The parser yields a bare `1`, so
+   exact unit matching could never have succeeded — 4.3M rows affected. ETL now
+   strips the leading word.
+2. **Broad tiers took 11.6 seconds.** `EXPLAIN` showed the GIN trigram index is
+   *lossy*: it returned 522,878 candidates of which 509,551 failed recheck, then
+   heap-scanned 138,851 blocks to reach 15 rows. Two fixes:
+   - added `(state, number_int)` index;
+   - **removed the trigram predicate from narrowed tiers entirely** — on a
+     selective tier the `BitmapAnd` still scans the whole GIN index (~920ms) and
+     costs more than it saves. Only `state`-only and `unnarrowed` use it now.
+   - raised `pg_trgm.similarity_threshold` 0.3 → **0.45** (db default): cuts
+     candidates from ~13,300 to ~51. The misspelt-suburb case scores 0.583, so
+     it still passes.
+   - **11,595ms → 34ms.**
+3. **`1 Macquarie Street` returned `1E` and `1A`.** `number_int` strips alpha
+   suffixes so 1/1A/1E collide. Added an exact-number-string bonus (0.14).
+4. **Scoring moved from Python into SQL.** Rows on one street share an identical
+   `search_text`, so ordering by similarity alone was arbitrary among them and
+   `LIMIT cap` could truncate correct answers before scoring. Latent, real.
+
+### Investigated, not a bug
+`200 George St Sydney 2000` returns only unit addresses. There is no plain
+"200 GEORGE STREET" in G-NAF — the two non-unit rows are `200A` and `200B`.
+All 104 candidates were scored; nothing was truncated. Ranking `29/200` (exact
+number `200`) above `200A` is correct.
+
+### Tests
+37 passing, 10 skipped. `test_search.py` (fixture) auto-skips once real data is
+loaded; `test_search_real.py` asserts against the full dataset including a
+500ms latency ceiling.
+
+### Next
+1. FastAPI endpoint + API keys + rate limiting
+2. **Hand-build the 100-address test set; measure top-1 accuracy. Target ≥90%.**
+3. Deploy behind Caddy on a VPS, real domain
+4. Docs page, then launch

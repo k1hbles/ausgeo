@@ -13,8 +13,9 @@ their own government already gives away.
 
 This does the annoying part once, in public.
 
-> **Status: in development.** Not deployed yet. The search layer works against a
-> fixture; the full 15.9M-row load is in progress.
+> **Status: in development.** Not deployed yet — no public API.
+> Running locally against the full **15,057,532-address** G-NAF load.
+> Median query **4ms**, worst observed **201ms**.
 
 ## How it works
 

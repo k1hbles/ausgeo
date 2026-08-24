@@ -15,20 +15,25 @@ import pytest
 
 psycopg = pytest.importorskip("psycopg")
 
-from geocoder.db import DATABASE_URL  # noqa: E402
-from geocoder.search import geocode  # noqa: E402
+from geocoder.db import DATABASE_URL
+from geocoder.search import geocode
 
 
 @pytest.fixture(scope="module")
 def conn():
     try:
         c = psycopg.connect(DATABASE_URL, connect_timeout=3)
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 - any failure means skip  # pragma: no cover
         pytest.skip(f"database unavailable: {exc}")
     with c:
         n = c.execute("select count(*) from address").fetchone()[0]
         if n == 0:
             pytest.skip("address table is empty - seed the fixture first")
+        if n > 1000:
+            pytest.skip(
+                f"address table holds {n:,} rows (real G-NAF), not the fixture. "
+                "These tests assert on FIX* ids; see test_search_real.py."
+            )
         yield c
 
 
