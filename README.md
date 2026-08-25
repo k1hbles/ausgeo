@@ -57,6 +57,65 @@ street number. The parser does **not** guess — it keeps the text for the fuzzy
 layer to resolve against real rows. Contorting the regex to handle building
 names breaks ordinary addresses.
 
+## API
+
+```bash
+curl "http://localhost:8000/v1/geocode?q=79 St Marys St Newtown NSW 2042&limit=1"
+```
+
+```json
+{
+  "query": "79 St Marys St Newtown NSW 2042",
+  "parsed": {
+    "unit": null, "number": "79", "street_locality": "ST MARYS ST NEWTOWN",
+    "state": "NSW", "postcode": "2042", "warnings": []
+  },
+  "results": [{
+    "gnaf_pid": "GANSW717621373",
+    "address": "79 ST MARYS STREET NEWTOWN NSW 2042",
+    "components": {
+      "unit": null, "number": "79", "street": "ST MARYS STREET",
+      "locality": "NEWTOWN", "state": "NSW", "postcode": "2042"
+    },
+    "location": { "lat": -33.89443499, "lon": 151.17390962 },
+    "score": 0.8818,
+    "match": "postcode+number"
+  }],
+  "took_ms": 17.86
+}
+```
+
+Structured input works too, and runs through the same pipeline:
+
+```bash
+curl "http://localhost:8000/v1/geocode?number=101&street=Collins+St&locality=Melbourne&state=VIC&postcode=3000"
+```
+
+### Endpoints
+
+| | |
+|---|---|
+| `GET /v1/geocode` | `q`, or any of `number` `street` `locality` `state` `postcode`; plus `limit` (1–20) |
+| `POST /v1/keys` | issue a free key — `{"email": "...", "label": "..."}` |
+| `GET /health` | status and row count |
+| `GET /docs` | interactive OpenAPI docs |
+
+### Rate limits
+
+| Tier | Limit | How |
+|---|---|---|
+| Anonymous | 100/day per IP | no key needed — the docs examples just work |
+| Free key | 2,500/day | `X-API-Key: ausgeo_...` |
+
+Every response carries `X-RateLimit-Limit` and `X-RateLimit-Remaining`.
+Limits reset at UTC midnight. Key issuance is throttled to 3 per IP per day.
+
+### Errors
+
+`422` bad or missing parameters · `401` unknown or revoked key ·
+`429` rate limited. **A query that matches nothing returns `200` with an empty
+`results` array** — not an error, and never a confident wrong answer.
+
 ## Stack
 
 Postgres 17 + `pg_trgm` · FastAPI · psycopg 3 · Docker.
@@ -75,6 +134,33 @@ uv sync
 uv run pytest
 uv run python scripts/try_search.py "42 Wattle St Newtown NSW 2042"
 ```
+
+To load the real 15.9M-address dataset instead of the fixture:
+
+```bash
+# ~2GB. See github.com/minus34/gnaf-loader for other access methods.
+curl -o data/gnaf.dmp https://minus34.com/opendata/geoscape-202605-gda2020/gnaf-202605.dmp
+
+docker exec geocoder-db psql -U geocoder -d gnaf -c "CREATE SCHEMA IF NOT EXISTS gnaf_202605_gda2020;"
+docker exec geocoder-db pg_restore -U geocoder -d gnaf --no-owner --no-privileges \
+  -t address_principals /data/gnaf.dmp
+
+uv run python scripts/load_gnaf.py --truncate           # ~100s
+docker exec -i geocoder-db psql -U geocoder -d gnaf -q < sql/02_indexes.sql
+docker exec -i geocoder-db psql -U geocoder -d gnaf -q < sql/03_api.sql
+docker exec geocoder-db psql -U geocoder -d gnaf -c \
+  "ALTER DATABASE gnaf SET pg_trgm.similarity_threshold = 0.45;"
+```
+
+Then run the API:
+
+```bash
+uv run uvicorn geocoder.api:app --reload
+# http://localhost:8000/docs
+```
+
+**Apple Silicon note:** `postgis/postgis` has no arm64 build; this uses
+`imresamu/postgis`, which does.
 
 ## Attribution
 

@@ -109,3 +109,27 @@ loaded; `test_search_real.py` asserts against the full dataset including a
 2. **Hand-build the 100-address test set; measure top-1 accuracy. Target ≥90%.**
 3. Deploy behind Caddy on a VPS, real domain
 4. Docs page, then launch
+
+## Session 3 — 2026-08-25 · the API
+
+`GET /v1/geocode` (free-text or structured), `POST /v1/keys`, `GET /health`,
+OpenAPI docs at `/docs`. Anonymous 100/day per IP so the docs examples work
+without signup; free keys 2,500/day; issuance throttled 3/IP/day.
+
+Rate limiting is a single atomic Postgres UPSERT per request — no Redis, one
+less service to run, and negligible next to the geocoding query.
+
+### Bug found by the tests
+`anon_usage.ip` was typed `inet`. **`X-Forwarded-For` is attacker-controlled**,
+so a malformed header would have raised `InvalidTextRepresentation` and returned
+a 500 in production. Columns are now `text`, the value is truncated to 45 chars
+and treated as an opaque bucket key, never parsed as an address. Surfaced only
+because FastAPI's TestClient sends `testclient` as the host.
+
+### Tests
+47 passing, 10 skipped (fixture suite, correctly skipped with real data loaded).
+
+### Still to do before launch
+1. **100-address test set, measured. Target ≥90% top-1.** The real gate.
+2. Deploy behind Caddy on a VPS, real domain
+3. Landing/docs page beyond the generated OpenAPI
